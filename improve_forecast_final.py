@@ -111,6 +111,15 @@ class MultiModelForecaster:
         df['is_month_start'] = (df['DayOfMonth'] <= 5).astype(int)
         df['is_month_end'] = (df['DayOfMonth'] >= 25).astype(int)
         
+        df['is_sunday'] = (df['DayOfWeek'] == 6).astype(int)
+
+        public_holidays = [
+            '2025-01-01', '2025-04-13', '2025-04-14', '2025-04-15',  # วันปีใหม่, สงกรานต์
+            '2025-05-01', '2025-06-03', '2025-07-28', '2025-08-12',
+            # เพิ่มตามต้องการ
+        ]
+        df['is_holiday'] = df['Date'].isin(pd.to_datetime(public_holidays)).astype(int)
+
         # Fill NaN values with forward fill then backward fill
         df = df.fillna(method='ffill').fillna(method='bfill')
         
@@ -119,17 +128,11 @@ class MultiModelForecaster:
     def get_feature_list(self):
         """Define the features to use for modeling"""
         return [
-            'Lag_1', 'Lag_2', 'Lag_3', 'Lag_7', 'Lag_14', 'Lag_30',
-            'rolling_mean_3', 'rolling_mean_7', 'rolling_mean_14', 'rolling_mean_30',
-            'rolling_std_3', 'rolling_std_7', 'rolling_std_14', 'rolling_std_30',
-            'rolling_median_7', 'rolling_median_14',
-            'diff_1', 'diff_7', 'diff_30',
-            'quantity_vs_mean_7', 'quantity_vs_mean_30',
-            'volatility_7', 'volatility_30',
-            'prev_month_sum', 'prev_month_mean', 'prev_month_std', 'prev_month_count',
-            'month_sin', 'month_cos', 'day_sin', 'day_cos', 'quarter_sin', 'quarter_cos',
-            'is_april', 'is_weekend', 'is_month_start', 'is_month_end',
-            'Month', 'DayOfWeek', 'Quarter'
+            'quantity_vs_mean_30', 'quantity_vs_mean_7', 'rolling_mean_30','rolling_mean_7',
+            'rolling_std_3','rolling_mean_3','rolling_mean_14','diff_1',
+            'rolling_std_7','diff_7', 'Lag_2', 'DayOfMonth',  'rolling_std_14',
+            'Lag_1', 'rolling_std_30', 'prev_month_mean', 'Lag_7', 'Lag_14',
+            'prev_month_sum','prev_month_std','is_sunday', 'is_holiday'
         ]
     
     def train_models(self, X_train, y_train, X_val, y_val):
@@ -199,8 +202,12 @@ class MultiModelForecaster:
         # Weighted ensemble
         ensemble_pred = np.zeros(len(X))
         for name, pred in predictions.items():
+            # ป้องกันค่าติดลบหลัง inverse_transform
+            pred = np.clip(pred, 0, None)  # ตัดค่าติดลบ
             ensemble_pred += self.model_weights[name] * pred
-            
+
+        ensemble_pred = np.clip(ensemble_pred, 0, None)
+
         return ensemble_pred, predictions
     
     def create_forecast_features(self, last_data, forecast_date, monthly_stats):
@@ -269,7 +276,16 @@ class MultiModelForecaster:
         new_row['is_weekend'] = 1 if forecast_date.dayofweek >= 5 else 0
         new_row['is_month_start'] = 1 if forecast_date.day <= 5 else 0
         new_row['is_month_end'] = 1 if forecast_date.day >= 25 else 0
+
+        public_holidays = [
+            '2025-01-01', '2025-04-13', '2025-04-14', '2025-04-15',  # วันปีใหม่, สงกรานต์
+            '2025-05-01', '2025-06-03', '2025-07-28', '2025-08-12',
+            # เพิ่มตามต้องการ
+        ]
         
+        new_row['is_sunday'] = 1 if forecast_date.weekday() == 6 else 0
+        new_row['is_holiday'] = 1 if forecast_date in pd.to_datetime(public_holidays) else 0
+
         return new_row
 
 
@@ -376,7 +392,7 @@ def forecast_2025_improved():
         })
         
         # Update recent data with prediction
-        recent_data = pd.concat([recent_data, pd.DataFrame([new_row])], ignore_index=True).tail(60)
+        recent_data = pd.concat([recent_data, pd.DataFrame([new_row])], ignore_index=True).tail(120)
         
         if (i + 1) % 10 == 0:
             print(f"Forecasted {i + 1}/{len(forecast_dates)} days")
